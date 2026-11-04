@@ -168,11 +168,36 @@ version, or production load test was exercised.
 
 ## Development
 
+The project follows
+[`cookiecutter-develop-pypackage` 0.4.0](https://github.com/ftnext/cookiecutter-develop-pypackage/tree/0.4.0),
+with `project_dir_name=adk-null-session`, `package_name=adk_null_session`, and
+`use_taskipy=no`. It uses setuptools and reads the package version from
+`adk_null_session.__version__`. The existing Apache-2.0 license and service
+implementation are retained; no command-line application is provided.
+
+Create an isolated environment and run the same checks used in CI:
+
 ```sh
-python -m pip install -e '.[test,test-a2a]'
-python -m pytest
-uv build
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -e '.[dev]'
+ruff check .
+python -m pytest -v
+python -m build
+python -m twine check --strict dist/*
 ```
+
+The `dev` extra includes pytest-randomly, async/A2A test dependencies, Ruff,
+build, and twine. The smaller `test` and `test-a2a` extras remain available.
+CI runs on pushes and pull requests using Python 3.11–3.14 with freshly resolved
+dependencies. A green CI run checks that resolved environment; it does not
+establish compatibility with every ADK release in the declared dependency range.
+
+In addition to the earlier shared-environment probes, template integration was
+verified in a fresh Python 3.13.18 environment with installed **google-adk 2.13.0**,
+**google-genai 2.34.0**, **pydantic 2.14.2**, and **a2a-sdk 0.3.26**: all **31 tests
+passed**. Other Python versions in the CI matrix have not been run locally.
 
 A2A-specific tests skip when A2A SDK is unavailable. Tests make no external model
 calls. Build artifacts include the implementation and tests, not exported ADK
@@ -181,3 +206,37 @@ source trees. The public API is `NullSessionService` and
 
 Based on the [author's article](https://nikkie-ftnext.hatenablog.com/entry/google-adk-python-a2a-server-idea-null-session-service).
 Licensed under the existing [Apache License 2.0](LICENSE).
+
+
+## Release preparation
+
+Update `__version__` in `src/adk_null_session/__init__.py` and the version stated
+in this README, then run the development checks and review the built wheel and
+source distribution. Commit the intended release changes and wait for CI to
+pass before publishing a release.
+
+Before the first upload, configure these external settings manually:
+
+1. Create the GitHub repository environment named `pypi` and configure its
+   protection rules as appropriate for releases.
+2. On PyPI, configure a Trusted Publisher (or a pending publisher for the first
+   release) for project `adk-null-session`, owner `ftnext`, repository
+   `adk-null-session`, workflow filename `publish.yml`, and environment `pypi`.
+   See the [PyPI instructions](https://docs.pypi.org/trusted-publishers/adding-a-publisher/).
+
+Publishing a GitHub Release tagged `v0.1.0` triggers
+`.github/workflows/publish.yml`. For later releases, the tag must be `v` followed
+by the package version. Its build job creates and checks both distributions and
+rejects a mismatched release tag. A separate job downloads those artifacts and
+uploads them to PyPI using OIDC; only this job has `id-token: write`. No PyPI API
+token is required. This workflow is for PyPI, not TestPyPI.
+
+Adding these files does not configure a PyPI publisher or perform an upload.
+Tagging, publishing the GitHub Release, and completing external setup are
+separate maintainer actions. The workflow has been validated locally; the
+GitHub-hosted job and actual OIDC upload still need verification during a release.
+
+After changing workflow actions, run `pinact run -u`, review the updated action
+versions and full SHA pins, and run `actionlint`. The PyPI publishing action uses
+a versioned release tag comment because pinact cannot resolve the template's
+`release/v1` branch.
