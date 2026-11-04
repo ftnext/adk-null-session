@@ -9,8 +9,6 @@ import json
 import weakref
 
 import pytest
-from pydantic import PrivateAttr
-from google.genai import types
 from google.adk import __version__
 from google.adk.agents.base_agent import BaseAgent
 from google.adk.agents.llm_agent import LlmAgent
@@ -23,6 +21,8 @@ from google.adk.models.llm_response import LlmResponse
 from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.adk.tools.tool_context import ToolContext
+from google.genai import types
+from pydantic import PrivateAttr
 
 from adk_null_session import NullSessionService, register_null_session_service
 
@@ -234,7 +234,7 @@ async def test_a2a_completed_tasks_remain_even_without_adk_sessions():
     pytest.importorskip('a2a')
     from a2a.server.request_handlers import DefaultRequestHandler
     from a2a.server.tasks import InMemoryTaskStore
-    from a2a.types import Message, MessageSendParams, Part, TextPart, TaskState
+    from a2a.types import Message, MessageSendParams, Part, TaskState, TextPart
     from google.adk.a2a.executor.a2a_agent_executor import A2aAgentExecutor
 
     service = NullSessionService()
