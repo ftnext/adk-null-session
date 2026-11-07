@@ -94,8 +94,26 @@ and selecting `null://` as its session service URI. You can also pass an explici
 The factory ignores URI contents and keyword arguments. Registration replaces
 any existing `null` factory in that registry. Installing or importing the
 package does **not** register a URI scheme, start uvicorn, or configure logging.
-Running an unrelated `adk web --session_service_uri null://` process after
-installation alone will not perform this registration.
+To use the ADK CLI, create `services.py` in the directory passed to `adk web`
+or `adk api_server`:
+
+```python
+from adk_null_session import register_null_session_service
+
+register_null_session_service()
+```
+
+For example, if your agents are under `./agents`, put the file at
+`./agents/services.py` and run either command:
+
+```sh
+adk web --session_service_uri null:// ./agents
+adk api_server --session_service_uri null:// ./agents
+```
+
+ADK loads this file at startup so registration happens in the CLI process.
+Use the web UI for self-contained invocations only. Features that require
+stored sessions, such as history browsing, are unavailable.
 
 ## Behavior
 
