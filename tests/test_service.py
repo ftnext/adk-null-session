@@ -50,9 +50,10 @@ async def test_partial_event_does_not_change_timestamp_or_state():
     assert session.state == {} and session.events == []
 
 
-def test_global_registration_is_explicit_and_creates_independent_services():
-    register_null_session_service()
+def test_global_registration_is_explicit_and_creates_independent_services(monkeypatch):
     registry = get_service_registry()
+    monkeypatch.setattr(registry, "_session_factories", registry._session_factories.copy())
+    register_null_session_service()
     first = registry.create_session_service("null://")
     second = registry.create_session_service("null://", app_name="ignored")
     assert isinstance(first, NullSessionService)
