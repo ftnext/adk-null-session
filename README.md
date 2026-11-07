@@ -16,7 +16,7 @@ From this checkout (Python 3.11 or newer):
 python -m pip install .
 ```
 
-The runtime dependency is `google-adk>=1.27.0,<3`. This range targets both ADK
+The runtime dependency is `google-adk>=1.27.1,<3`. This range targets both ADK
 1.x and 2.x; it does not claim that every release or dependency combination has
 been tested. The package does not directly require A2A SDK. Install the A2A
 extras appropriate to your ADK version separately if your server uses A2A.
@@ -141,7 +141,8 @@ Events and state still occupy memory and can grow during an invocation.
 
 ## Compatibility and verification
 
-The initial minimum is ADK **1.27.0**, rather than all 1.x versions. In 1.25.0,
+The minimum is ADK **1.27.1** because
+[1.27.0 was yanked on PyPI](https://pypi.org/project/google-adk/1.27.0/). In 1.25.0,
 base `append_event` fails to pass `temp:output_key` to a later agent; the same
 failure occurs with `InMemorySessionService`. It was fixed by upstream commit
 [`2780ae2`](https://github.com/google/adk-python/commit/2780ae2892adfbebc7580c843d2eaad29f86c335)
@@ -191,7 +192,8 @@ python -m twine check --strict dist/*
 The `dev` extra includes pytest-randomly, async/A2A test dependencies, Ruff,
 build, and twine. The smaller `test` and `test-a2a` extras remain available.
 CI runs on pushes and pull requests using Python 3.11–3.14 with freshly resolved
-dependencies. A green CI run checks that resolved environment; it does not
+dependencies. A separate Python 3.13 job tests ADK 1.27.1 without the A2A SDK.
+A green CI run checks those resolved environments; it does not
 establish compatibility with every ADK release in the declared dependency range.
 
 In addition to the earlier shared-environment probes, template integration was
