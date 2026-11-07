@@ -10,7 +10,13 @@ replacement for a history-preserving session service.
 
 ## Install
 
-From this checkout (Python 3.11 or newer):
+Install from [PyPI](https://pypi.org/project/adk-null-session/) with Python 3.11 or newer:
+
+```sh
+python -m pip install adk-null-session
+```
+
+To install from a local checkout:
 
 ```sh
 python -m pip install .
@@ -208,35 +214,11 @@ Based on the [author's article](https://nikkie-ftnext.hatenablog.com/entry/googl
 Licensed under the existing [Apache License 2.0](LICENSE).
 
 
-## Release preparation
+## Releasing
 
 Update `__version__` in `src/adk_null_session/__init__.py` and the version stated
 in this README, then run the development checks and review the built wheel and
-source distribution. Commit the intended release changes and wait for CI to
-pass before publishing a release.
-
-Before the first upload, configure these external settings manually:
-
-1. Create the GitHub repository environment named `pypi` and configure its
-   protection rules as appropriate for releases.
-2. On PyPI, configure a Trusted Publisher (or a pending publisher for the first
-   release) for project `adk-null-session`, owner `ftnext`, repository
-   `adk-null-session`, workflow filename `publish.yml`, and environment `pypi`.
-   See the [PyPI instructions](https://docs.pypi.org/trusted-publishers/adding-a-publisher/).
-
-Publishing a GitHub Release tagged `v0.1.0` triggers
-`.github/workflows/publish.yml`. For later releases, the tag must be `v` followed
-by the package version. Its build job creates and checks both distributions and
-rejects a mismatched release tag. A separate job downloads those artifacts and
-uploads them to PyPI using OIDC; only this job has `id-token: write`. No PyPI API
-token is required. This workflow is for PyPI, not TestPyPI.
-
-Adding these files does not configure a PyPI publisher or perform an upload.
-Tagging, publishing the GitHub Release, and completing external setup are
-separate maintainer actions. The workflow has been validated locally; the
-GitHub-hosted job and actual OIDC upload still need verification during a release.
-
-After changing workflow actions, run `pinact run -u`, review the updated action
-versions and full SHA pins, and run `actionlint`. The PyPI publishing action uses
-a versioned release tag comment because pinact cannot resolve the template's
-`release/v1` branch.
+source distribution. Once CI passes for the release commit, publish a GitHub
+Release with a tag matching the package version (`vX.Y.Z`). The
+[publish workflow](.github/workflows/publish.yml) builds and checks the
+distributions, then uploads them to PyPI.
