@@ -50,18 +50,22 @@ async def test_partial_event_does_not_change_timestamp_or_state():
     assert session.state == {} and session.events == []
 
 
-def test_global_registration_is_explicit_and_creates_independent_services(monkeypatch):
+def test_global_registration_creates_independent_services(monkeypatch):
     registry = get_service_registry()
-    monkeypatch.setattr(registry, "_session_factories", registry._session_factories.copy())
-    register_null_session_service()
     first = registry.create_session_service("null://")
     second = registry.create_session_service("null://", app_name="ignored")
     assert isinstance(first, NullSessionService)
     assert isinstance(second, NullSessionService)
     assert first is not second
 
+    monkeypatch.setattr(registry, "_session_factories", registry._session_factories.copy())
+    registry._session_factories.pop("null", None)
+    assert registry.create_session_service("null://") is None
+    register_null_session_service()
+    assert isinstance(registry.create_session_service("null://"), NullSessionService)
 
-def test_import_does_not_register_or_configure_logging():
+
+def test_import_registers_without_configuring_logging():
     import subprocess
     import sys
 
@@ -72,6 +76,9 @@ registry = get_service_registry()
 assert registry.create_session_service("null://") is None
 before = (logging.root.level, list(logging.root.handlers))
 import adk_null_session
-assert registry.create_session_service("null://") is None
+assert isinstance(
+    registry.create_session_service("null://"),
+    adk_null_session.NullSessionService,
+)
 assert (logging.root.level, list(logging.root.handlers)) == before
 '''], check=True)
