@@ -5,27 +5,28 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
-import hashlib
 import importlib.metadata
 import json
 import multiprocessing
 import platform
-import statistics
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from server import run_server
 
+from .dataset import SCHEMA_VERSION, source_info, summarize
+from .measurement import MODES, metrics_for
+from .server import run_server
+
+ROOT = Path(__file__).resolve().parent
 SAMPLE = (
-    Path.home()
-    / "study/reading/adk-python/contributing/samples/a2a/a2a_basic"
-    / "remote_a2a/check_prime_agent/agent.py"
+    ROOT
+    / ".samples/adk-python/contributing/samples/a2a/a2a_basic/remote_a2a/check_prime_agent/agent.py"
 )
 REQUEST_TEXT = "Check whether 2, 17 and 18 are prime."
-METRICS = ("rss_bytes", "traced_current_bytes", "sessions", "events", "tasks")
+METRICS = tuple(dict.fromkeys(metric for mode in MODES for metric in metrics_for(mode)))
 
 
 def positive_int(value):
@@ -35,22 +36,28 @@ def positive_int(value):
     return number
 
 
-def arguments():
+def arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--requests", type=positive_int, default=1000)
-    parser.add_argument("--concurrency", type=int, choices=(2, 3), default=3)
+    parser.add_argument("--concurrency", type=positive_int, default=3)
     parser.add_argument("--repeats", type=positive_int, default=3)
     parser.add_argument("--warmup", type=positive_int, default=30)
     parser.add_argument("--sample-every", type=positive_int, default=100)
+    parser.add_argument("--measurement", choices=("both", *MODES), default="both")
     parser.add_argument("--sample-agent", type=Path, default=SAMPLE)
     parser.add_argument("--output", type=Path, help="new output directory")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    args.measurement_modes = (
+        list(MODES) if args.measurement == "both" else [args.measurement]
+    )
     if args.requests < args.concurrency or args.sample_every < args.concurrency:
         parser.error("--requests and --sample-every must be >= --concurrency")
     args.sample_agent = args.sample_agent.expanduser().resolve()
     for path in (args.sample_agent, args.sample_agent.with_name("agent.json")):
         if not path.is_file():
-            parser.error(f"sample file does not exist: {path}; use --sample-agent")
+            parser.error(
+                f"sample file does not exist: {path}; follow benchmark/README.md or use --sample-agent"
+            )
     return args
 
 
@@ -107,29 +114,47 @@ async def send_batch(client, url, expected, start, count, concurrency, phase):
             group.create_task(worker())
 
 
-def snapshot(connection, service, repeat, completed, elapsed, baseline=None):
+def snapshot(
+    connection,
+    service,
+    mode,
+    repeat,
+    completed,
+    batch_count,
+    concurrency,
+    elapsed,
+    baseline=None,
+):
     connection.send("baseline" if baseline is None else "snapshot")
     row = receive(connection)
     row.update(
-        service=service, repeat=repeat, requests=completed, elapsed_seconds=elapsed
+        service=service,
+        measurement_mode=mode,
+        repeat=repeat,
+        requests=completed,
+        elapsed_seconds=elapsed,
     )
     reference = baseline if baseline is not None else row
-    for metric in METRICS:
+    for metric in metrics_for(mode):
         row[f"delta_{metric}"] = row[metric] - reference[metric]
-    if row["completed"] != completed:
+    if row["completed"] != completed or row["batch_completed"] != batch_count:
         raise RuntimeError(f"Receiver completion count mismatch: {row}")
+    if row["batch_max_active"] != min(concurrency, batch_count):
+        raise RuntimeError(
+            f"Receiver did not observe the requested batch concurrency: {row}"
+        )
     expected_sessions = completed if service == "in_memory" else 0
     if row["delta_sessions"] != expected_sessions or row["delta_tasks"] != completed:
         raise RuntimeError(f"Unexpected store retention counts: {row}")
     return row
 
 
-async def run_case(args, service, repeat, writer, csv_file):
+async def run_case(args, service, mode, repeat, writer, csv_file):
     context = multiprocessing.get_context("spawn")
     connection, child_connection = context.Pipe()
     process = context.Process(
         target=run_server,
-        args=(child_connection, service, str(args.sample_agent), 5.0),
+        args=(child_connection, service, str(args.sample_agent), 5.0, mode),
     )
     process.start()
     child_connection.close()
@@ -153,7 +178,9 @@ async def run_case(args, service, repeat, writer, csv_file):
                 args.concurrency,
                 "warmup",
             )
-            baseline = snapshot(connection, service, repeat, 0, 0)
+            baseline = snapshot(
+                connection, service, mode, repeat, 0, 0, args.concurrency, 0
+            )
             rows = [baseline]
             writer.writerow(baseline)
             csv_file.flush()
@@ -172,24 +199,30 @@ async def run_case(args, service, repeat, writer, csv_file):
                 )
                 elapsed += time.perf_counter() - began
                 row = snapshot(
-                    connection, service, repeat, start + count, elapsed, baseline
+                    connection,
+                    service,
+                    mode,
+                    repeat,
+                    start + count,
+                    count,
+                    args.concurrency,
+                    elapsed,
+                    baseline,
                 )
                 rows.append(row)
                 writer.writerow(row)
                 csv_file.flush()
-                mib = 1024**2
+                metric = "rss_bytes" if mode == "rss" else "traced_current_bytes"
                 print(
-                    f"{service:9} repeat={repeat} requests={start + count:5} "
-                    f"RSS Δ={row['delta_rss_bytes'] / mib:7.2f} MiB "
-                    f"traced Δ={row['delta_traced_current_bytes'] / mib:7.2f} MiB "
-                    f"max_active={row['max_active']}",
+                    f"{mode:11} {service:9} repeat={repeat} requests={start + count:5} "
+                    f"memory Δ={row['delta_' + metric] / 1024**2:7.2f} MiB "
+                    f"batch_max_active={row['batch_max_active']}",
                     flush=True,
                 )
-            if not 2 <= rows[-1]["max_active"] <= args.concurrency:
-                raise RuntimeError("Receiver did not observe the requested concurrency")
             succeeded = True
             return {
                 "service": service,
+                "measurement_mode": mode,
                 "repeat": repeat,
                 "pid": ready["pid"],
                 "expected_response": ready["expected"],
@@ -221,6 +254,7 @@ async def main(args):
     output = output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=False)
     report = {
+        "schema_version": SCHEMA_VERSION,
         "status": "running",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "python": sys.version,
@@ -241,7 +275,7 @@ async def main(args):
         "config": {
             k: str(v) if isinstance(v, Path) else v for k, v in vars(args).items()
         },
-        "sample_sha256": hashlib.sha256(args.sample_agent.read_bytes()).hexdigest(),
+        "source": source_info(ROOT.parent, args.sample_agent),
         "request_text": REQUEST_TEXT,
         "model": "scripted; 5 ms delay per model step",
         "task_store": "InMemoryTaskStore (retained in both conditions)",
@@ -262,11 +296,16 @@ async def main(args):
         "rss_bytes",
         "traced_current_bytes",
         "traced_peak_bytes",
+        "tracemalloc_overhead_bytes",
+        "tracemalloc_enabled",
         "sessions",
         "events",
         "tasks",
         "completed",
-        "max_active",
+        "batch_completed",
+        "batch_max_active",
+        "max_active_since_baseline",
+        "measurement_mode",
         *[f"delta_{m}" for m in METRICS],
     ]
     print(f"Results: {output}", flush=True)
@@ -277,26 +316,26 @@ async def main(args):
             writer = csv.DictWriter(csv_file, fieldnames=fields)
             writer.writeheader()
             for repeat in range(1, args.repeats + 1):
-                # Alternate order to reduce systematic ordering effects.
+                # Alternate mode and service order across repetitions.
+                modes = (
+                    args.measurement_modes
+                    if repeat % 2
+                    else list(reversed(args.measurement_modes))
+                )
                 services = (
                     ("in_memory", "null") if repeat % 2 else ("null", "in_memory")
                 )
-                for service in services:
-                    report["runs"].append(
-                        await run_case(args, service, repeat, writer, csv_file)
-                    )
-                    save()
-        report["median_final_deltas"] = {
-            service: {
-                metric: statistics.median(
-                    run["final"][f"delta_{metric}"]
-                    for run in report["runs"]
-                    if run["service"] == service
-                )
-                for metric in METRICS
-            }
-            for service in ("in_memory", "null")
-        }
+                for mode in modes:
+                    for service in services:
+                        report["runs"].append(
+                            await run_case(
+                                args, service, mode, repeat, writer, csv_file
+                            )
+                        )
+                        save()
+        report["median_final_deltas"] = summarize(
+            report["runs"], args.measurement_modes
+        )
         report["status"] = "completed"
     except BaseException as error:
         report.update(status="failed", error=repr(error))

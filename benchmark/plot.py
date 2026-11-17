@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
 import statistics
 from pathlib import Path
 
@@ -13,11 +11,13 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from .dataset import load_dataset
+
 ROOT = Path(__file__).resolve().parent
 SERVICES = {"in_memory": "InMemory", "null": "Null"}
 METRICS = {
-    "delta_traced_current_bytes": "Python allocations (tracemalloc)",
-    "delta_rss_bytes": "Process memory (RSS)",
+    "delta_traced_current_bytes": "Python allocations · tracing on",
+    "delta_rss_bytes": "RSS · tracing off",
 }
 THEMES = {
     "light": ("#ffffff", "#202938", "#dce2eb", "#8294ad", "#7040ce"),
@@ -26,48 +26,27 @@ THEMES = {
 
 
 def load_data(directory):
-    report = json.loads((directory / "report.json").read_text(encoding="utf-8"))
-    if report["status"] != "completed":
-        raise ValueError("Only completed benchmarks can be plotted")
-    with (directory / "samples.csv").open(newline="", encoding="utf-8") as file:
-        rows = list(csv.DictReader(file))
+    report, rows = load_dataset(directory)
+    if set(report["config"]["measurement_modes"]) != {"rss", "tracemalloc"}:
+        raise ValueError(
+            "Both independent measurement modes are required for these charts"
+        )
     series = {}
-    checkpoints = None
     for service in SERVICES:
-        selected = [row for row in rows if row["service"] == service]
-        groups = {}
-        for row in selected:
-            groups.setdefault(int(row["requests"]), []).append(row)
-        if (
-            not groups
-            or min(groups) != 0
-            or max(groups) != report["config"]["requests"]
-        ):
-            raise ValueError(f"Missing baseline or final sample for {service}")
-        if checkpoints is not None and checkpoints != sorted(groups):
-            raise ValueError("Both services must have the same checkpoints")
-        checkpoints = sorted(groups)
         series[service] = {}
-        for count, samples in sorted(groups.items()):
-            repeats = [int(row["repeat"]) for row in samples]
-            if sorted(repeats) != list(range(1, report["config"]["repeats"] + 1)):
-                raise ValueError(f"Missing or duplicate repeats at {service}/{count}")
-            series[service][count] = {}
-            for metric in METRICS:
-                values = [int(row[metric]) / 1024**2 for row in samples]
-                series[service][count][metric] = (
-                    statistics.median(values),
-                    min(values),
-                    max(values),
+        for mode, metric in (
+            ("tracemalloc", "delta_traced_current_bytes"),
+            ("rss", "delta_rss_bytes"),
+        ):
+            groups = {}
+            for row in rows:
+                if row["service"] == service and row["measurement_mode"] == mode:
+                    groups.setdefault(int(row["requests"]), []).append(int(row[metric]))
+            for count, values in sorted(groups.items()):
+                series[service].setdefault(count, {})[metric] = tuple(
+                    value / 1024**2
+                    for value in (statistics.median(values), min(values), max(values))
                 )
-                if count == report["config"]["requests"]:
-                    expected = report["median_final_deltas"][service][
-                        metric.removeprefix("delta_")
-                    ]
-                    if statistics.median(values) != expected / 1024**2:
-                        raise ValueError(
-                            f"CSV and report disagree for {service}/{metric}"
-                        )
     return report, series
 
 
@@ -156,7 +135,7 @@ def render(report, series, output, theme, preview_dir):
         fig.text(
             0.05,
             0.07,
-            "Bars: median · whiskers: min–max across runs · scripted LLM · A2A tasks retained in both conditions",
+            "Bars: median · whiskers: min–max · separate processes per mode · scripted LLM · A2A tasks retained",
             fontsize=9,
             color=text,
         )
@@ -205,7 +184,7 @@ def render(report, series, output, theme, preview_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "directory", type=Path, nargs="?", default=ROOT / "data/2026-11-17"
+        "directory", type=Path, nargs="?", default=ROOT / "data/2026-11-18"
     )
     parser.add_argument("--output", type=Path, default=ROOT / "assets")
     parser.add_argument("--preview-dir", type=Path)

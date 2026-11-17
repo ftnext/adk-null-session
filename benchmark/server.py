@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import gc
 import importlib.util
 import logging
 import os
@@ -12,13 +11,19 @@ import traceback
 import tracemalloc
 from pathlib import Path
 
+from .measurement import RequestTracker, take_snapshot
 
-def run_server(connection, service_name: str, sample_agent: str, delay_ms: float):
+
+def run_server(
+    connection, service_name: str, sample_agent: str, delay_ms: float, mode: str
+):
     """Spawn entry point; imports and application allocations stay in the child."""
     os.environ["OTEL_SDK_DISABLED"] = "true"
     logging.disable(logging.CRITICAL)
+    # Override tracing inherited through PYTHONTRACEMALLOC / interpreter flags.
+    tracemalloc.stop()
     try:
-        asyncio.run(serve(connection, service_name, Path(sample_agent), delay_ms))
+        asyncio.run(serve(connection, service_name, Path(sample_agent), delay_ms, mode))
     except BaseException:
         try:
             connection.send({"error": traceback.format_exc()})
@@ -27,7 +32,7 @@ def run_server(connection, service_name: str, sample_agent: str, delay_ms: float
         raise
 
 
-async def serve(connection, service_name, sample_agent, delay_ms):
+async def serve(connection, service_name, sample_agent, delay_ms, mode):
     import psutil
     import uvicorn
     from a2a.server.apps import A2AStarletteApplication
@@ -80,7 +85,8 @@ async def serve(connection, service_name, sample_agent, delay_ms):
     )
 
     # Start after imports. Warmup is included in the baseline, not the measured delta.
-    tracemalloc.start()
+    if mode == "tracemalloc":
+        tracemalloc.start()
     service = (
         InMemorySessionService()
         if service_name == "in_memory"
@@ -99,19 +105,19 @@ async def serve(connection, service_name, sample_agent, delay_ms):
     app = A2AStarletteApplication(agent_card=card, http_handler=handler).build(
         rpc_url=rpc_path
     )
-    counters = {"active": 0, "max_active": 0, "completed": 0}
+    tracker = RequestTracker()
 
     class CountRequests:
         async def __call__(self, scope, receive, send):
             if scope["type"] != "http" or scope["path"] != rpc_path:
                 return await app(scope, receive, send)
-            counters["active"] += 1
-            counters["max_active"] = max(counters["max_active"], counters["active"])
+            tracker.begin()
+            succeeded = False
             try:
                 await app(scope, receive, send)
-                counters["completed"] += 1
+                succeeded = True
             finally:
-                counters["active"] -= 1
+                tracker.finish(succeeded)
 
     server = uvicorn.Server(
         uvicorn.Config(
@@ -127,6 +133,16 @@ async def serve(connection, service_name, sample_agent, delay_ms):
     )
     server_task = asyncio.create_task(server.serve(sockets=[sock]))
     process = psutil.Process()
+
+    def count_stores():
+        sessions = events = 0
+        if isinstance(service, InMemorySessionService):
+            for users in service.sessions.values():
+                for user_sessions in users.values():
+                    sessions += len(user_sessions)
+                    events += sum(len(s.events) for s in user_sessions.values())
+        return {"sessions": sessions, "events": events, "tasks": len(store.tasks)}
+
     try:
         while not server.started:
             if server_task.done():
@@ -140,34 +156,14 @@ async def serve(connection, service_name, sample_agent, delay_ms):
                 break
             if command not in {"baseline", "snapshot"}:
                 raise ValueError(f"Unknown command: {command}")
-            # The load generator drains each batch before asking for a snapshot.
-            # Give response handlers a turn to finish releasing local references.
-            await asyncio.sleep(0.02)
-            if counters["active"]:
-                raise RuntimeError("Memory snapshot requested with active requests")
-            gc.collect()
-            if command == "baseline":
-                counters["max_active"] = 0
-                counters["completed"] = 0
-                tracemalloc.reset_peak()
-            sessions = events = 0
-            if isinstance(service, InMemorySessionService):
-                for users in service.sessions.values():
-                    for user_sessions in users.values():
-                        sessions += len(user_sessions)
-                        events += sum(len(s.events) for s in user_sessions.values())
-            current, peak = tracemalloc.get_traced_memory()
             connection.send(
-                {
-                    "rss_bytes": process.memory_info().rss,
-                    "traced_current_bytes": current,
-                    "traced_peak_bytes": peak,
-                    "sessions": sessions,
-                    "events": events,
-                    "tasks": len(store.tasks),
-                    "completed": counters["completed"],
-                    "max_active": counters["max_active"],
-                }
+                await take_snapshot(
+                    tracker,
+                    mode,
+                    process,
+                    count_stores,
+                    baseline=(command == "baseline"),
+                )
             )
     finally:
         server.should_exit = True
