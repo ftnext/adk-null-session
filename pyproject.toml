@@ -27,6 +27,13 @@ dynamic = ["version"]
 [project.optional-dependencies]
 test = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2"]
 test-a2a = ["a2a-sdk[http-server]>=0.3.25,<1"]
+benchmark = [
+    "a2a-sdk[http-server]>=0.3.25,<1",
+    "httpx>=0.28,<1",
+    "matplotlib>=3.9,<4",
+    "psutil>=6,<8",
+    "uvicorn>=0.30,<1",
+]
 dev = [
     "pytest>=8,<10",
     "pytest-asyncio>=0.24,<2",
