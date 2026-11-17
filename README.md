@@ -83,30 +83,30 @@ object. Runner retrieves a new empty object through `get_session()`, so the
 initial state is lost **before the first invocation**. Pass per-request values
 through `run_async(state_delta=...)`, as above, or include them in the request.
 
-## Explicit URI registration
+## URI registration
 
 ```python
+import adk_null_session
 from google.adk.cli.service_registry import get_service_registry
-from adk_null_session import NullSessionService, register_null_session_service
 
-register_null_session_service()
 service = get_service_registry().create_session_service("null://")
-assert isinstance(service, NullSessionService)
+assert isinstance(service, adk_null_session.NullSessionService)
 ```
 
-Call registration in the same Python process before building your ADK server
-and selecting `null://` as its session service URI. You can also pass an explicit
-`ServiceRegistry` instance to `register_null_session_service(registry)`.
+Importing `adk_null_session` in the same Python process registers `null://` in
+ADK's global `ServiceRegistry`, before building your ADK server and selecting
+`null://` as its session service URI. You can still call
+`register_null_session_service(registry)` when passing an explicit
+`ServiceRegistry` instance (or to re-register the global `null` factory).
 The factory ignores URI contents and keyword arguments. Registration replaces
-any existing `null` factory in that registry. Installing or importing the
-package does **not** register a URI scheme, start uvicorn, or configure logging.
+any existing `null` factory in that registry. Installing the package without
+importing it does **not** register a URI scheme, and importing it does **not**
+start uvicorn or configure logging.
 To use the ADK CLI, create `services.py` in the directory passed to `adk web`
 or `adk api_server`:
 
 ```python
-from adk_null_session import register_null_session_service
-
-register_null_session_service()
+import adk_null_session
 ```
 
 For example, if your agents are under `./agents`, put the file at

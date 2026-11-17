@@ -1,4 +1,4 @@
-"""Explicit registration with ADK's process-local URI service registry."""
+"""Registration with ADK's process-local URI service registry."""
 
 from __future__ import annotations
 
@@ -17,8 +17,10 @@ def _null_session_factory(uri: str, **kwargs: Any) -> NullSessionService:
 def register_null_session_service(registry: ServiceRegistry | None = None) -> None:
     """Register ``null://`` in the supplied registry or ADK's global registry.
 
-    Call explicitly in the same process before constructing the ADK server.
-    Importing or installing this package does not register a scheme.
+    Importing ``adk_null_session`` registers ``null://`` in ADK's global
+    registry automatically. Call this function directly to register with a
+    custom ``ServiceRegistry`` instance or re-register the global ``null``
+    scheme.
     """
     if registry is None:
         from google.adk.cli.service_registry import get_service_registry
