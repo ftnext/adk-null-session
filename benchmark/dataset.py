@@ -156,6 +156,9 @@ def validate_dataset(report, rows):
                     )
         for endpoint in ("baseline", "final"):
             sample = run[endpoint]
+            expected_count = 0 if endpoint == "baseline" else config["requests"]
+            if sample["requests"] != expected_count:
+                raise ValueError(f"Incorrect endpoint checkpoint: {key}/{endpoint}")
             row = indexed[(*key, sample["requests"])]
             if any(
                 row.get(field) != ("" if value is None else str(value))

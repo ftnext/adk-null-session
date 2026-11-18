@@ -99,7 +99,9 @@ def render(report, series, output, theme, preview_dir):
         )
         fig.text(0.05, 0.82, subtitle, fontsize=11)
         for ax, (metric, title) in zip(axes, METRICS.items(), strict=True):
-            maximum = max(series[s][count][metric][2] for s in SERVICES)
+            minimum = min(0, *(series[s][count][metric][1] for s in SERVICES))
+            maximum = max(0, *(series[s][count][metric][2] for s in SERVICES))
+            span = maximum - minimum or 1
             for index, service in enumerate(SERVICES):
                 median, low, high = series[service][count][metric]
                 ax.barh(index, median, height=0.50, color=colors[service], zorder=3)
@@ -114,9 +116,10 @@ def render(report, series, output, theme, preview_dir):
                     zorder=4,
                 )
                 ax.text(
-                    high + maximum * 0.035,
+                    low - span * 0.035 if median < 0 else high + span * 0.035,
                     index,
-                    f"+{median:.2f} MiB",
+                    f"{median:+.2f} MiB",
+                    ha="right" if median < 0 else "left",
                     va="center",
                     fontsize=12,
                     weight="bold",
@@ -124,7 +127,11 @@ def render(report, series, output, theme, preview_dir):
                 )
             ax.set_yticks(range(len(SERVICES)), SERVICES.values())
             ax.set_ylim(1.65, -0.65)
-            ax.set_xlim(0, maximum * 1.43)
+            left = minimum - span * 0.43 if minimum < 0 else 0
+            right = maximum + span * 0.43 if maximum > 0 or minimum == 0 else 0
+            ax.set_xlim(left, right)
+            if minimum < 0:
+                ax.axvline(0, color=grid, linewidth=0.8)
             ax.set_title(title, loc="left", pad=12, fontsize=13, weight="bold")
             ax.set_xlabel("Increase from warmup baseline (MiB)", fontsize=10)
             ax.set_axisbelow(True)
@@ -166,7 +173,14 @@ def render(report, series, output, theme, preview_dir):
             ax.set_xlabel("Completed requests")
             ax.set_ylabel("Increase from baseline (MiB)", fontsize=10)
             ax.set_xlim(0, count)
-            ax.set_ylim(bottom=0)
+            minimum = min(
+                values[metric][1]
+                for checkpoints in series.values()
+                for values in checkpoints.values()
+            )
+            ax.set_ylim(bottom=min(0, minimum * 1.05))
+            if minimum < 0:
+                ax.axhline(0, color=grid, linewidth=0.8)
             ax.grid(color=grid, alpha=0.7)
             ax.set_axisbelow(True)
             ax.legend(frameon=False, labelcolor=text, loc="upper left")

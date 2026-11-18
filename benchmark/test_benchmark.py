@@ -274,6 +274,98 @@ def test_source_provenance_is_recorded_automatically(tmp_path):
     ).measurement_modes == ["rss", "tracemalloc"]
 
 
+@pytest.mark.parametrize(
+    ("endpoint", "count"),
+    [("baseline", 3), ("baseline", 4), ("final", 0), ("final", 3)],
+)
+def test_endpoint_cannot_select_another_valid_checkpoint(
+    dataset, tmp_path, endpoint, count
+):
+    report, rows = load_dataset(dataset)
+    run = report["runs"][0]
+    row = next(
+        row
+        for row in rows
+        if row["measurement_mode"] == run["measurement_mode"]
+        and row["service"] == run["service"]
+        and int(row["repeat"]) == run["repeat"]
+        and int(row["requests"]) == count
+    )
+    # Keep the endpoint internally consistent with a real CSV row, and adjust
+    # the summary too: neither existing check alone detects a wrong checkpoint.
+    replacement = {}
+    for field, original in run[endpoint].items():
+        if original is None:
+            replacement[field] = None
+        elif isinstance(original, bool):
+            replacement[field] = row[field] == "True"
+        else:
+            replacement[field] = type(original)(row[field])
+    run[endpoint] = replacement
+    report["median_final_deltas"] = summarize(
+        report["runs"], report["config"]["measurement_modes"]
+    )
+    (dataset / "report.json").write_text(json.dumps(report))
+    destination = tmp_path / "rejected-endpoint"
+    with pytest.raises(ValueError, match="Incorrect endpoint checkpoint"):
+        publish(dataset, destination)
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+@pytest.mark.parametrize(
+    "scenario", ["negative", "crossing_band", "all_negative", "zero"]
+)
+def test_charts_show_decreases_and_full_ranges(
+    dataset, tmp_path, monkeypatch, theme, scenario
+):
+    monkeypatch.setenv("MPLCONFIGDIR", str(tmp_path / "matplotlib"))
+    pytest.importorskip("matplotlib")
+    from benchmark import plot
+
+    report, series = plot.load_data(dataset)
+    metric = "delta_rss_bytes"
+    for service, checkpoints in series.items():
+        for count, values in checkpoints.items():
+            if count == 0:
+                continue
+            if scenario == "zero":
+                values[metric] = (0, 0, 0)
+            elif scenario == "all_negative" or service == "null":
+                values[metric] = (
+                    (1, -1, 2) if scenario == "crossing_band" else (-2, -3, -1)
+                )
+
+    figures = {}
+    monkeypatch.setattr(
+        plot,
+        "save",
+        lambda fig, output, name, theme, preview: figures.update({name: fig}),
+    )
+    try:
+        plot.render(report, series, tmp_path, theme, None)
+        bars = figures["memory-comparison"].axes[1]
+        growth = figures["memory-growth"].axes[1]
+        for service in plot.SERVICES:
+            _, low, high = series[service][4][metric]
+            assert bars.get_xlim()[0] <= low <= high <= bars.get_xlim()[1]
+            for values in series[service].values():
+                _, low, high = values[metric]
+                assert growth.get_ylim()[0] <= low <= high <= growth.get_ylim()[1]
+        assert bars.get_xlim()[0] < bars.get_xlim()[1]
+        assert growth.get_ylim()[0] < growth.get_ylim()[1]
+        assert bars.get_xlim()[0] <= 0 <= bars.get_xlim()[1]
+        assert growth.get_ylim()[0] <= 0 <= growth.get_ylim()[1]
+        if scenario in ("negative", "all_negative"):
+            label = next(text for text in bars.texts if text.get_text() == "-2.00 MiB")
+            assert label.get_ha() == "right"
+            assert bars.get_xlim()[0] <= label.get_position()[0] < -3
+        assert not any("+-" in text.get_text() for text in bars.texts)
+    finally:
+        for figure in figures.values():
+            plot.plt.close(figure)
+
+
 def test_charts_use_independent_rss_runs_and_even_repeat_medians(
     dataset, tmp_path, monkeypatch
 ):
