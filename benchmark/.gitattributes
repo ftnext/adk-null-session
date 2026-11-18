@@ -1,0 +1,2 @@
+# Keep exported CSV byte-identical to the raw csv.DictWriter output (CRLF).
+data/**/*.csv -text whitespace=cr-at-eol

@@ -234,6 +234,13 @@ Based on the [author's article](https://nikkie-ftnext.hatenablog.com/entry/googl
 Licensed under the existing [Apache License 2.0](LICENSE).
 
 
+## Memory benchmark
+
+See [benchmark/README.md](benchmark/README.md) for a loopback A2A comparison of
+`InMemorySessionService` and `NullSessionService`. It defaults to 1,000 requests
+with three concurrent workers per condition and uses scripted model responses.
+RSS and traced allocations are measured in separate server processes.
+
 ## Releasing
 
 Update `__version__` in `src/adk_null_session/__init__.py` and the version stated
