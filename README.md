@@ -5,7 +5,7 @@ It returns independent `Session` objects without retaining them in the service.
 Use it when every request supplies all the information needed to finish in a
 single Runner invocation, including any ordinary function-call round trips.
 
-Version **0.1.0** is an initial experimental package. It is not a transparent
+Version 0.2.0 is an experimental package. It is not a transparent
 replacement for a history-preserving session service.
 
 ## Install
